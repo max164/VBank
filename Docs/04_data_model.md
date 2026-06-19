@@ -131,6 +131,13 @@
 * `status in ('Success','Rejected')`
 * `amount > 0`
 * `from_account_id is not null or to_account_id is not null`
+* `from_account_id is null or to_account_id is null or from_account_id <> to_account_id`
+* `transaction_type <> 'Deposit' or (from_account_id is null and to_account_id is not null)`
+* `transaction_type <> 'Withdraw' or (from_account_id is not null and to_account_id is null)`
+* `transaction_type <> 'Transfer' or (from_account_id is not null and to_account_id is not null)`
+* `transaction_type <> 'Compensation' or related_transaction_id is not null`
+* `transaction_type = 'Compensation' or related_transaction_id is null`
+* `related_transaction_id is null or related_transaction_id <> transaction_id`
 
 **Индексы:**
 
@@ -193,6 +200,12 @@
 * `request_type in ('UserRegistration','AccountOpening','Deposit','Withdraw','Transfer')`
 * `status in ('PendingApproval','Approved','Rejected')`
 * `result_entity_type is null or result_entity_type in ('User','Account','Transaction')`
+* `(result_entity_type is null) = (result_entity_id is null)`
+* `(status = 'PendingApproval') = (decided_at is null)`
+* `status <> 'PendingApproval' or (operator_user_id is null and reason_code is null and result_entity_type is null)`
+* `status = 'PendingApproval' or (operator_user_id is not null and reason_code is not null)`
+* `status <> 'Approved' or result_entity_type is not null`
+* `status <> 'Rejected' or result_entity_type is null`
 
 **Индексы:**
 
@@ -226,7 +239,7 @@
 
 **Ограничения:**
 
-* `scope in ('Request','Transaction','Both')`
+* `scope in ('Request','Transaction','User','Both')`
 * `status in ('Active','Disabled')`
 
 ### 2.9. `system_setting`
@@ -298,7 +311,7 @@
 **Поля:**
 
 * `idempotency_entry_id uuid pk`
-* `actor_id uuid not null`
+* `idempotency_scope varchar(...) not null`
 * `endpoint varchar(...) not null`
 * `idempotency_key uuid not null`
 * `request_hash varchar(...) not null`
@@ -308,7 +321,14 @@
 
 **Ограничения:**
 
-* `unique (actor_id, endpoint, idempotency_key)`
+* `idempotency_scope <> ''`
+* `unique (idempotency_scope, endpoint, idempotency_key)`
+
+**Правила области идемпотентности:**
+
+* для аутентифицированного пользователя `idempotency_scope = 'user:' || user_id`;
+* для неаутентифицированных маршрутов `POST /auth/register` и `POST /auth/login` используется `idempotency_scope = 'anonymous'`;
+* область идемпотентности не является секретом и не заменяет проверку доступа.
 
 **Индексы:**
 
@@ -362,7 +382,7 @@ PostgreSQL должен удерживать статические ограни
 * закрытый счёт имеет заполненный `closed_at` и `balance = 0`, а незакрытый счёт не имеет `closed_at`;
 * положительную сумму `transaction_record.amount`;
 * ненулевую сумму `ledger_entry.amount`, где знак отражает списание или зачисление;
-* уникальность `idempotency_entry(actor_id, endpoint, idempotency_key)`;
+* уникальность `idempotency_entry(idempotency_scope, endpoint, idempotency_key)`;
 * уникальность `refresh_session.token_hash`;
 * фиксированный набор ключей `system_setting` и допустимые значения режимов.
 
@@ -391,16 +411,77 @@ PostgreSQL должен удерживать статические ограни
 
 ### 4.3. Начальные справочники и режимы
 
-Начальные данные не противоречат схеме, если выполняются следующие условия:
+Начальные данные применяются после создания таблиц `currency`, `account_type`, `reason_code` и `system_setting`. Шаг начального наполнения должен быть воспроизводимым: повторный запуск не создаёт дубликаты и обновляет записи по естественным ключам `currency_code`, `account_type_code`, `reason_code` и `key`.
+
+#### 4.3.1. Валюты
+
+Минимальный набор валют первой версии:
+
+| `currency_id` | `currency_code` | `name` | `precision` | `status` | Назначение |
+| --- | --- | --- | --- | --- | --- |
+| `d2d907b5-70f5-4d39-a3f3-01f42e8c68dd` | `RUB` | Российский рубль | `2` | `Active` | Базовая валюта для открытия счетов, переводов, пополнений и выводов в первой версии. |
+
+Правила:
 
 * все начальные валюты имеют уникальный трёхбуквенный `currency_code`, `precision between 2 and 10` и статус `Active`;
-* все начальные типы счетов имеют уникальный `account_type_code`, статус `Active` и явно заданный `allow_negative_balance`;
-* начальные причины решений используют `scope in ('Request','Transaction','Both')` и статус `Active`;
-* таблица `system_setting` содержит ровно разрешённые ключи: `bank_name`, `registration_mode`, `account_opening_mode`, `internal_transfer_mode`, `cash_in_out_mode`;
-* начальные значения режимов входят в допустимые наборы, а `cash_in_out_mode` стартует как `manual`;
-* начальные данные создаются миграцией или отдельным воспроизводимым шагом после создания справочных таблиц.
+* первая рабочая версия не требует нескольких валют для запуска основных сценариев;
+* добавление новых валют выполняется отдельным решением по справочникам, без изменения исторических операций.
 
-Результат сверки: явных противоречий между проектной схемой, требованиями и начальными режимами не выявлено. Схема готова к планированию начальной миграции Alembic без создания каталога `migrations` в этой работе.
+#### 4.3.2. Типы счетов
+
+Минимальный набор типов счетов первой версии:
+
+| `account_type_code` | `name` | `allow_negative_balance` | `status` | Назначение |
+| --- | --- | --- | --- | --- |
+| `CURRENT` | Текущий счёт | `false` | `Active` | Обычный счёт без права уйти в минус. |
+| `CREDIT` | Кредитный счёт | `true` | `Active` | Счёт, на котором допустим отрицательный баланс в пределах `negative_balance_limit`. |
+
+Правила:
+
+* все начальные типы счетов имеют уникальный `account_type_code`, статус `Active` и явно заданный `allow_negative_balance`;
+* `negative_balance_limit` задаётся на конкретном счёте, а не в справочнике типов;
+* серверная часть должна отклонять ненулевой `negative_balance_limit` для типа с `allow_negative_balance = false`.
+
+#### 4.3.3. Причины решений
+
+Минимальный набор причин решений первой версии:
+
+| `reason_code` | `name` | `description` | `scope` | `status` | Назначение |
+| --- | --- | --- | --- | --- | --- |
+| `CLIENT_REQUEST` | Запрос клиента | Решение принято по обращению клиента. | `Request` | `Active` | Причина для заявок, созданных по инициативе клиента. |
+| `APPROVED_BY_OPERATOR` | Одобрено оператором | Оператор одобрил заявку после проверки. | `Request` | `Active` | Причина успешного решения заявки. |
+| `REJECTED_BY_OPERATOR` | Отклонено оператором | Оператор отклонил заявку после проверки. | `Request` | `Active` | Причина отказа по заявке. |
+| `OPERATOR_CORRECTION` | Корректировка оператором | Оператор создаёт корректирующую компенсацию. | `Transaction` | `Active` | Причина операции `Compensation`. |
+| `SECURITY_REVIEW` | Проверка безопасности | Статус пользователя изменён после проверки безопасности. | `User` | `Active` | Причина блокировки или разблокировки пользователя. |
+
+Правила:
+
+* начальные причины решений используют `scope in ('Request','Transaction','User','Both')` и статус `Active`;
+* `Request` применяется к одобрению и отклонению заявок;
+* `Transaction` применяется к компенсациям финансовых операций;
+* `User` применяется к изменению статуса пользователя и фиксируется в аудите;
+* `Both` зарезервирован для причин, которые одинаково применимы к заявкам и операциям.
+
+#### 4.3.4. Режимы работы системы
+
+Начальная таблица `system_setting` содержит ровно разрешённые ключи:
+
+| `setting_id` | `key` | `value` | `value_type` | `description` |
+| --- | --- | --- | --- | --- |
+| `04b646cb-1f4d-4f95-b353-2f7fd826edfb` | `bank_name` | `VBank` | `string` | Отображаемое имя системы. |
+| `75c62702-f2e1-47f8-bcf7-d6d7dbb3e9a0` | `registration_mode` | `auto` | `mode` | Регистрация пользователя создаёт `Client` без ручной заявки. |
+| `a82a2774-f39c-4dd6-9ff3-53c79f400f2f` | `account_opening_mode` | `auto` | `mode` | Открытие счёта через `POST /accounts` создаёт счёт сразу. |
+| `6be06937-c0ea-4936-aa8d-3f5ec21c4957` | `internal_transfer_mode` | `enabled` | `mode` | Внутренний перевод выполняется напрямую. |
+| `ab3bb372-dfad-468a-9f17-81c7404f56e5` | `cash_in_out_mode` | `manual` | `mode` | Пополнение и вывод доступны только через заявку. |
+
+Правила:
+
+* `bank_name` хранится как непустая строка;
+* режимы используют `value_type = 'mode'` и значения из допустимых наборов таблицы `system_setting`;
+* `cash_in_out_mode` стартует как `manual`, потому что пополнение и вывод в первой версии проходят через заявку;
+* стартовые значения `registration_mode = auto`, `account_opening_mode = auto` и `internal_transfer_mode = enabled` позволяют запустить базовый сценарий без заранее созданных пользователей и без секретов в репозитории.
+
+Результат сверки: явных противоречий между проектной схемой, требованиями и начальными режимами не выявлено. Схема готова к применению начальных справочников после начальной миграции Alembic без создания каталога `migrations` в этой работе.
 
 ## 5. План начальной миграции Alembic
 
@@ -412,7 +493,7 @@ PostgreSQL должен удерживать статические ограни
 * миграции применяются только вперёд;
 * уже применённая миграция не изменяется задним числом, исправления добавляются новой ревизией;
 * откат миграции не является штатным способом исправления состояния базы;
-* начальная миграция создаёт только схему, а состав начальных справочников и режимов уточняется в F2-08;
+* начальная миграция создаёт только схему, а состав начальных справочников и режимов берётся из раздела 4.3;
 * имена ограничений и индексов должны быть стабильными: `pk_*`, `fk_*`, `uq_*`, `ck_*`, `ix_*`.
 
 ### 5.2. Порядок создания таблиц
@@ -430,7 +511,7 @@ PostgreSQL должен удерживать статические ограни
 9. `ledger_entry` — проводки, после `account`, `currency` и `transaction_record`.
 10. `refresh_session` — отзывные сессии обновления, после `user_account`.
 11. `audit_log` — журнал аудита; `actor_id` не получает внешний ключ, потому что `actor_type` может быть `User`, `Operator`, `Admin` или `System`.
-12. `idempotency_entry` — хранилище идемпотентности; `actor_id` хранится без внешнего ключа, чтобы не связывать таблицу с одной ролью или типом исполнителя.
+12. `idempotency_entry` — хранилище идемпотентности; `idempotency_scope` хранится без внешнего ключа, чтобы покрыть аутентифицированные и неаутентифицированные изменяющие запросы.
 
 Самоссылка `transaction_record.related_transaction_id -> transaction_record.transaction_id` создаётся после создания таблицы `transaction_record` либо внутри `create_table`, если выбранный стиль Alembic явно поддерживает такое ограничение.
 
@@ -440,7 +521,7 @@ PostgreSQL должен удерживать статические ограни
 
 * первичные ключи всех таблиц;
 * внешние ключи, перечисленные в разделе 2;
-* уникальные ограничения `user_account.email`, `user_account.username`, `user_account.phone_number`, `account.account_number`, `account(user_id, currency_id, account_type_code)`, `currency.currency_code`, `account_type.account_type_code`, `reason_code.reason_code`, `system_setting.key`, `refresh_session.token_hash`, `idempotency_entry(actor_id, endpoint, idempotency_key)`;
+* уникальные ограничения `user_account.email`, `user_account.username`, `user_account.phone_number`, `account.account_number`, `account(user_id, currency_id, account_type_code)`, `currency.currency_code`, `account_type.account_type_code`, `reason_code.reason_code`, `system_setting.key`, `refresh_session.token_hash`, `idempotency_entry(idempotency_scope, endpoint, idempotency_key)`;
 * `check`-ограничения статусов, ролей, типов операций, типов заявок, областей `reason_code.scope`, режимов `system_setting`, денежных сумм, формата `account_number`, правил `closed_at` и нулевого баланса закрытого счёта;
 * `not null` для обязательных полей;
 * nullable-поля только там, где это указано в модели данных.
@@ -482,7 +563,64 @@ PostgreSQL должен удерживать статические ограни
 
 1. применить все ревизии Alembic вперёд;
 2. убедиться, что созданы все таблицы, внешние ключи, ограничения и индексы из разделов 2 и 5;
-3. применить начальные справочники и режимы после F2-08;
+3. применить начальные справочники и режимы из раздела 4.3;
 4. повторить проверку на новой пустой базе без ручных действий.
 
 Правка уже применённой ревизии вместо новой миграции запрещена.
+
+## 6. Сверка инвариантов и связей данных
+
+Сверка фиксирует, какие правила удерживает схема PostgreSQL, а какие должна проверять серверная часть. Если правило зависит от роли, текущего режима, нескольких строк, расчёта баланса или внешнего маршрута, оно остаётся в серверной части и покрывается тестом.
+
+### 6.1. Инварианты и место проверки
+
+| Область | Инвариант | Уровень PostgreSQL | Уровень серверной части | Проверка при реализации |
+| --- | --- | --- | --- | --- |
+| `User` | `email`, `username`, `phone_number` уникальны; роль и статус входят в допустимые наборы. | `unique`, `check role`, `check status`. | Блокировка входа и новых действий для `Blocked`; проверка переходов `Active <-> Blocked`. | Дубли регистрации, вход заблокированного пользователя, смена статуса. |
+| `Account` | Счёт уникален по `(user_id, currency_id, account_type_code)`, номер состоит из 20 цифр, закрытый счёт имеет `closed_at` и нулевой баланс. | `fk`, `unique`, `check account_number`, `check status`, `check balance`, `check closed_at`. | Активность валюты и типа счёта; запрет операций и закрытия для `Blocked` и `Closed`; согласование `negative_balance_limit` с `AccountType`. | Открытие дубля, закрытие с ненулевым балансом, операции по заблокированному и закрытому счёту. |
+| `Transaction` | Сумма операции положительная; тип, статус и форма счётов соответствуют типу операции; компенсация ссылается на исходную операцию. | `fk`, `check transaction_type`, `check status`, `check amount`, `check` формы `from_account_id` и `to_account_id`, самоссылка `related_transaction_id`. | Совпадение валют, доступность счетов, достаточность средств, лимит отрицательного баланса, атомарный расчёт балансов и блокировка строк. | Успешный перевод, перевод на тот же счёт, нехватка средств, превышение лимита, компенсация неуспешной операции. |
+| `LedgerEntry` | Проводка ссылается на счёт и операцию, сумма проводки не равна нулю и хранит знак движения. | `fk`, `check amount <> 0`, индексы по счёту и операции. | Создание проводок только для `Transaction.status = Success`; балансировка проводок и операции в одной транзакции. | Успешный перевод создаёт две проводки; отклонённая операция не создаёт проводок; сумма проводок меняет баланс ожидаемо. |
+| `Request` | Тип и статус заявки допустимы; `PendingApproval` не имеет решения; `Rejected` не имеет результата; результат хранится парой `result_entity_type` и `result_entity_id`. | `fk`, `check request_type`, `check status`, `check` полей решения и результата. | Создание заявки только при разрешённом режиме, проверка `payload`, финальность `Approved` и `Rejected`, создание результата только при `Approved`. | Ручная регистрация, ручное открытие счёта, пополнение, вывод, ручной перевод, повторное решение заявки. |
+| Справочники и настройки | Начальные справочники активны, настройки имеют разрешённые ключи и значения. | `unique`, `check status`, `check scope`, `check system_setting`. | Проверка активности справочных записей и области `reason_code.scope` в сценарии. | Неактивная валюта или тип счёта отклоняются; неподходящий `ReasonCode` возвращает `REASON_CODE_NOT_ALLOWED`. |
+| Идемпотентность | Повтор одного ключа в одной области и на одном маршруте не создаёт новый эффект. | `unique (idempotency_scope, endpoint, idempotency_key)`. | Расчёт `request_hash`, возврат сохранённого ответа при полном совпадении и `IDEMPOTENCY_REPLAY_CONFLICT` при другом теле. | Повтор `POST` с тем же ключом и телом; повтор с тем же ключом и другим телом. |
+| Аудит | Запись аудита содержит тип актора, контекст, результат и сквозной `request_id` HTTP-запроса. | `check actor_type`, индекс по `request_id`; внешний ключ на `actor_id` не задаётся из-за полиморфного актора. | Запись аудита для каждой значимой попытки и результата; корреляция с ответом API. | Успешные и отклонённые действия создают аудит с тем же `request_id`. |
+
+### 6.2. Связи данных
+
+Обязательные связи первой версии:
+
+* `account.user_id -> user_account.user_id`;
+* `account.currency_id -> currency.currency_id`;
+* `account.account_type_code -> account_type.account_type_code`;
+* `transaction_record.from_account_id -> account.account_id`;
+* `transaction_record.to_account_id -> account.account_id`;
+* `transaction_record.currency_id -> currency.currency_id`;
+* `transaction_record.reason_code -> reason_code.reason_code`;
+* `transaction_record.initiator_user_id -> user_account.user_id`;
+* `transaction_record.related_transaction_id -> transaction_record.transaction_id`;
+* `ledger_entry.account_id -> account.account_id`;
+* `ledger_entry.currency_id -> currency.currency_id`;
+* `ledger_entry.transaction_id -> transaction_record.transaction_id`;
+* `request.initiator_user_id -> user_account.user_id`;
+* `request.operator_user_id -> user_account.user_id`;
+* `request.reason_code -> reason_code.reason_code`;
+* `refresh_session.user_id -> user_account.user_id`.
+
+Полиморфные связи проверяются серверной частью:
+
+* `request.result_entity_type` и `request.result_entity_id` указывают на созданный `User`, `Account` или `Transaction` после одобрения заявки;
+* `audit_log.actor_id` трактуется вместе с `actor_type`, поэтому не имеет одного внешнего ключа;
+* `idempotency_entry.idempotency_scope` хранит область повтора для пользователя или анонимного маршрута и не ссылается на одну таблицу.
+
+### 6.3. Проверяемость критериев приёмки
+
+Критерии приёмки из технического задания покрываются следующими группами тестов:
+
+* регистрация и вход: тесты режимов `registration_mode`, уникальности пользователя, входа по трём идентификаторам и блокировки `Blocked`;
+* счета: тесты уникальности `(user_id, currency_id, account_type_code)`, формата номера, закрытия только при `balance = 0`, запрета действий для `Blocked` и `Closed`;
+* переводы: тесты атомарного изменения двух балансов, двух проводок, запрета перевода на тот же счёт, нехватки средств и лимита отрицательного баланса;
+* пополнение и вывод: тесты создания заявки, одобрения с операцией и проводкой, отклонения без финансового эффекта;
+* идемпотентность и аудит: тесты повторного `Idempotency-Key`, конфликта тела запроса и записи аудита с `request_id`;
+* справочники и настройки: тесты начальных данных из раздела 4.3, фильтрации справочников и изменения разрешённых настроек.
+
+Результат сверки: явных противоречий между доменными инвариантами, схемой PostgreSQL и API-договором не осталось. Правила, которые нельзя надёжно выразить ограничением одной строки, явно оставлены серверной части и имеют проверяемые критерии.

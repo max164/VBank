@@ -351,7 +351,7 @@
   "setting_id": "ab3bb372-dfad-468a-9f17-81c7404f56e5",
   "key": "cash_in_out_mode",
   "value": "manual",
-  "value_type": "enum",
+  "value_type": "mode",
   "description": "Режим пополнения и вывода",
   "updated_at": "2026-06-19T12:30:00Z"
 }
