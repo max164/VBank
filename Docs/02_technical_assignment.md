@@ -722,6 +722,163 @@
 
 `GET /audit` принимает параметры строки запроса `actor_id`, `action_type`, `result`, `created_from`, `created_to`, `request_id`, `limit`, `offset` и возвращает страницу объектов `AuditLog`.
 
+### 4.12. Единый формат ошибок и коды ошибок
+
+Раздел задаёт обязательный формат ошибок для всех маршрутов `/api/v1`. Консольный клиент и веб-приложение должны уметь обрабатывать ошибку по стабильному `code`, показывать пользователю безопасное `message` и сохранять `request_id` для диагностики.
+
+#### 4.12.1. Тело ошибки
+
+Ошибка возвращается как JSON-объект:
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Запрос содержит недопустимые поля",
+  "details": {
+    "category": "validation",
+    "field_errors": [
+      {
+        "field": "amount",
+        "code": "must_be_positive",
+        "message": "Сумма должна быть больше нуля"
+      }
+    ]
+  },
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f"
+}
+```
+
+Правила:
+
+* верхний уровень ошибки всегда содержит только обязательные поля `code`, `message`, `details`, `request_id`;
+* `code` — стабильный машинный код в `UPPER_SNAKE_CASE`; клиенты не должны разбирать текст `message` для выбора поведения;
+* `message` — короткое русскоязычное описание, безопасное для показа пользователю;
+* `details` — объект; если деталей нет, возвращается `{}`;
+* `details` не содержит пароли, токены, хэши, секреты и внутренние трассировки;
+* `request_id` — сквозной идентификатор HTTP-запроса; он создаётся до проверки аутентификации и возвращается во всех ошибках;
+* в ошибке не используются поля успешного ответа `data` и `page`.
+
+#### 4.12.2. Категории ошибок
+
+| Категория `details.category` | Назначение | Основные HTTP-статусы |
+| --- | --- | --- |
+| `validation` | Неверная структура запроса, параметры фильтрации, формат идентификатора, тело заявки или ключ идемпотентности. | `400`, `422` |
+| `access` | Ошибка аутентификации, сессии, роли, области видимости или состояние пользователя, запрещающее действие. | `401`, `403` |
+| `object_state` | Объект не найден, уже находится в финальном состоянии или не допускает действие из-за текущего статуса. | `404`, `409` |
+| `business_rule` | Нарушено предметное правило VBank: деньги, режимы работы, справочники, заявки, компенсации. | `409`, `422` |
+
+#### 4.12.3. Справочник кодов ошибок
+
+| Код | Категория | HTTP | Когда используется |
+| --- | --- | --- | --- |
+| `VALIDATION_ERROR` | `validation` | `422` | Тело запроса не соответствует формату, поле отсутствует, имеет неверный тип или недопустимое значение. |
+| `FILTER_INVALID` | `validation` | `400` | Параметры фильтрации, периода, пагинации или сортировки недопустимы. |
+| `IDEMPOTENCY_KEY_REQUIRED` | `validation` | `400` | Изменяющий запрос `POST` или `PATCH` отправлен без `Idempotency-Key`. |
+| `IDEMPOTENCY_KEY_INVALID` | `validation` | `400` | `Idempotency-Key` не является `uuid`. |
+| `IDEMPOTENCY_REPLAY_CONFLICT` | `object_state` | `409` | Повторный запрос использует тот же `Idempotency-Key`, но другое тело или другой маршрут. |
+| `REQUEST_TYPE_NOT_ALLOWED` | `validation` | `422` | `request_type` неизвестен или не поддерживается в `/requests`. |
+| `PAYLOAD_TYPE_MISMATCH` | `validation` | `422` | `payload` заявки не соответствует выбранному `request_type`. |
+| `SETTING_VALUE_INVALID` | `validation` | `422` | Значение настройки не соответствует типу или допустимому набору. |
+| `AUTHENTICATION_REQUIRED` | `access` | `401` | Маршрут требует `Authorization`, но токен не передан. |
+| `TOKEN_INVALID` | `access` | `401` | `access token` отсутствует, истёк, повреждён или не прошёл проверку. |
+| `INVALID_CREDENTIALS` | `access` | `401` | Логин, почта, телефон или пароль неверны. |
+| `REFRESH_SESSION_INVALID` | `access` | `401` | Refresh-сессия не найдена, истекла или отозвана. |
+| `ACCESS_DENIED` | `access` | `403` | Роль или область видимости пользователя не позволяет выполнить действие. |
+| `USER_BLOCKED` | `access` | `403` | Пользователь заблокирован и не может входить или инициировать новые действия. |
+| `USER_PENDING_APPROVAL` | `object_state` | `409` | Пользователь из ручной регистрации ещё не одобрен и не может войти. |
+| `OBJECT_NOT_FOUND` | `object_state` | `404` | Пользователь, счёт, операция, заявка, справочник или настройка не найдены либо не видны текущей роли. |
+| `ACCOUNT_BLOCKED` | `object_state` | `409` | Счёт заблокирован и не принимает новые операции или закрытие. |
+| `ACCOUNT_CLOSED` | `object_state` | `409` | Счёт закрыт и не принимает новые операции. |
+| `APPLICATION_ALREADY_DECIDED` | `object_state` | `409` | Заявка уже находится в `Approved` или `Rejected`. |
+| `TRANSACTION_NOT_SUCCESSFUL` | `object_state` | `409` | Исходная операция не существует как успешный бизнес-факт для компенсации. |
+| `USER_STATUS_TRANSITION_INVALID` | `object_state` | `409` | Переход статуса пользователя не входит в разрешённые переходы. |
+| `UNIQUE_CONFLICT` | `business_rule` | `409` | Нарушена уникальность почты, имени пользователя, телефона, номера счёта или другой уникальной пары. |
+| `ACCOUNT_ALREADY_EXISTS` | `business_rule` | `409` | У пользователя уже есть счёт того же типа в той же валюте. |
+| `MODE_DISABLED` | `business_rule` | `409` | Сценарий запрещён текущим режимом работы системы. |
+| `SEPARATE_ROUTE_REQUIRED` | `business_rule` | `409` | Заявка пытается заменить предметную команду, для которой есть отдельный маршрут API. |
+| `DICTIONARY_ENTRY_INACTIVE` | `business_rule` | `409` | Валюта, тип счёта или причина решения отключены. |
+| `REASON_CODE_NOT_ALLOWED` | `business_rule` | `422` | `reason_code` не существует, отключён или не подходит по области применения. |
+| `ACCOUNT_BALANCE_NOT_ZERO` | `business_rule` | `409` | Счёт нельзя закрыть, потому что баланс не равен нулю. |
+| `NEGATIVE_BALANCE_NOT_ALLOWED` | `business_rule` | `422` | Тип счёта не разрешает отрицательный баланс. |
+| `NEGATIVE_BALANCE_LIMIT_EXCEEDED` | `business_rule` | `422` | Операция нарушает лимит отрицательного баланса. |
+| `INSUFFICIENT_FUNDS` | `business_rule` | `422` | Операция списания или перевода не может быть выполнена из-за недостатка средств. |
+| `SAME_ACCOUNT_TRANSFER` | `business_rule` | `422` | Перевод направлен на тот же счёт. |
+| `CURRENCY_MISMATCH` | `business_rule` | `422` | Валюта операции не совпадает с валютой затронутого счёта или счетов. |
+| `COMPENSATION_NOT_ALLOWED` | `business_rule` | `409` | Компенсацию нельзя создать для указанной операции или состояния счетов. |
+| `APPLICATION_RESULT_NOT_ALLOWED` | `business_rule` | `409` | Одобрение заявки не может создать результат из-за предметных правил. |
+
+#### 4.12.4. Состав `details`
+
+Для `validation`:
+
+```json
+{
+  "category": "validation",
+  "field_errors": [
+    {
+      "field": "payload.amount",
+      "code": "must_be_positive",
+      "message": "Сумма должна быть больше нуля"
+    }
+  ]
+}
+```
+
+Для `access`:
+
+```json
+{
+  "category": "access",
+  "required_role": "Operator",
+  "actor_role": "Client"
+}
+```
+
+Для `object_state`:
+
+```json
+{
+  "category": "object_state",
+  "entity_type": "Application",
+  "entity_id": "2a7b4a11-2d39-45a1-b885-8b3ce062ce4d",
+  "current_status": "Approved",
+  "expected_status": "PendingApproval"
+}
+```
+
+Для `business_rule`:
+
+```json
+{
+  "category": "business_rule",
+  "rule": "transfer_requires_different_accounts",
+  "related_entity_type": "Account",
+  "reason_code": null
+}
+```
+
+`ReasonCode` не заменяет код ошибки API. Если оператор отклоняет заявку, это успешный ответ со статусом заявки `Rejected` и заполненным `reason_code`. Если переданный `reason_code` нельзя использовать, API возвращает `REASON_CODE_NOT_ALLOWED`.
+
+#### 4.12.5. Ошибки по ключевым сценариям
+
+| Сценарий | Основные коды ошибок |
+| --- | --- |
+| Любой изменяющий запрос `POST` или `PATCH` | `IDEMPOTENCY_KEY_REQUIRED`, `IDEMPOTENCY_KEY_INVALID`, `IDEMPOTENCY_REPLAY_CONFLICT`, `VALIDATION_ERROR` |
+| Регистрация | `VALIDATION_ERROR`, `UNIQUE_CONFLICT`, `MODE_DISABLED`, `IDEMPOTENCY_REPLAY_CONFLICT` |
+| Вход, обновление и выход из сессии | `INVALID_CREDENTIALS`, `USER_BLOCKED`, `USER_PENDING_APPROVAL`, `REFRESH_SESSION_INVALID`, `TOKEN_INVALID` |
+| Получение текущего пользователя | `AUTHENTICATION_REQUIRED`, `TOKEN_INVALID`, `USER_BLOCKED`, `OBJECT_NOT_FOUND` |
+| Список и карточка счёта | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `OBJECT_NOT_FOUND`, `USER_BLOCKED` |
+| Открытие счёта | `VALIDATION_ERROR`, `DICTIONARY_ENTRY_INACTIVE`, `ACCOUNT_ALREADY_EXISTS`, `NEGATIVE_BALANCE_NOT_ALLOWED`, `USER_BLOCKED`, `MODE_DISABLED` |
+| Закрытие счёта | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `ACCOUNT_BLOCKED`, `ACCOUNT_CLOSED`, `ACCOUNT_BALANCE_NOT_ZERO`, `USER_BLOCKED` |
+| История операций | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `USER_BLOCKED` |
+| Внутренний перевод | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `SAME_ACCOUNT_TRANSFER`, `CURRENCY_MISMATCH`, `INSUFFICIENT_FUNDS`, `NEGATIVE_BALANCE_LIMIT_EXCEEDED`, `ACCOUNT_BLOCKED`, `ACCOUNT_CLOSED`, `MODE_DISABLED` |
+| Компенсация операции | `OBJECT_NOT_FOUND`, `TRANSACTION_NOT_SUCCESSFUL`, `COMPENSATION_NOT_ALLOWED`, `REASON_CODE_NOT_ALLOWED`, `ACCESS_DENIED` |
+| Создание заявки | `REQUEST_TYPE_NOT_ALLOWED`, `PAYLOAD_TYPE_MISMATCH`, `SEPARATE_ROUTE_REQUIRED`, `MODE_DISABLED`, `USER_BLOCKED` |
+| Просмотр заявок | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `OBJECT_NOT_FOUND`, `USER_BLOCKED` |
+| Одобрение или отклонение заявки | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `APPLICATION_ALREADY_DECIDED`, `REASON_CODE_NOT_ALLOWED`, `APPLICATION_RESULT_NOT_ALLOWED` |
+| Управление пользователями | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `VALIDATION_ERROR`, `USER_STATUS_TRANSITION_INVALID`, `USER_BLOCKED` |
+| Справочники, настройки и аудит | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `OBJECT_NOT_FOUND`, `SETTING_VALUE_INVALID`, `USER_BLOCKED` |
+
 ## 5. Требования к интерфейсам
 
 ### 5.1. Консольный клиент
