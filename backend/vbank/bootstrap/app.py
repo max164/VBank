@@ -5,6 +5,7 @@ from vbank.shared.api.exceptions import register_exception_handlers
 from vbank.shared.api.middleware import RequestContextMiddleware
 from vbank.shared.api.router import api_v1_router
 from vbank.shared.config import get_settings
+from vbank.shared.database import build_session_factory
 from vbank.shared.telemetry import configure_logging
 
 
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
         debug=settings.debug,
     )
     app.state.settings = settings
+    app.state.session_factory = build_session_factory(settings)
 
     app.add_middleware(
         CORSMiddleware,

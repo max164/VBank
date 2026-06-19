@@ -18,6 +18,11 @@ Copy-Item .env.example .env
 В `.env` укажите локальный `VBANK_DATABASE_URL`. Пример из `.env.example`
 использует учебные значения и не является секретом.
 
+Для локальной аутентификации задаются параметры `VBANK_ACCESS_TOKEN_*` и
+`VBANK_REFRESH_TOKEN_*`. Значение `VBANK_ACCESS_TOKEN_SECRET` из примера — только
+заглушка для разработки; в рабочей среде нужно задать собственный секрет через
+переменные окружения.
+
 ## Запуск
 
 ```powershell
@@ -50,3 +55,19 @@ python -m alembic -c alembic.ini upgrade head
 ```powershell
 python -m alembic -c alembic.ini upgrade head --sql
 ```
+
+## Аутентификация
+
+В первой версии серверной части реализованы маршруты:
+
+```text
+POST /api/v1/auth/register
+POST /api/v1/auth/login
+POST /api/v1/auth/refresh
+POST /api/v1/auth/logout
+GET  /api/v1/auth/me
+```
+
+Все `POST`-маршруты принимают `Idempotency-Key`. По умолчанию refresh-токен
+возвращается в теле ответа для консольного клиента. Для cookie-режима задайте
+`VBANK_REFRESH_TOKEN_TRANSPORT=cookie`.

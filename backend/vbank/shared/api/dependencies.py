@@ -1,6 +1,8 @@
+from collections.abc import Iterator
 from uuid import UUID
 
 from fastapi import Request
+from sqlalchemy.orm import Session
 
 from vbank.shared.config import Settings
 from vbank.shared.errors import VBankError
@@ -14,6 +16,15 @@ def get_request_id(request: Request) -> str:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_session(request: Request) -> Iterator[Session]:
+    session_factory = request.app.state.session_factory
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def require_idempotency_key(request: Request) -> UUID:
