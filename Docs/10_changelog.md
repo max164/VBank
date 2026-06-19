@@ -172,3 +172,18 @@ README.md, Docs/05_architecture_structure.md, Docs/08_backlog-2.md, Docs/08_back
 Дата: 25.04.2026
 
 ---
+
+## 12. Было принято целевое решение о Python-стеке и веб-приложении
+
+Состояние:
+Завершено.
+
+Результат:
+Было зафиксировано, что VBank реализуется как серверная часть на Python, отдельное веб-приложение, внешний консольный клиент и PostgreSQL. Java-структура и настольное приложение заменены на целевую структуру `backend`, `frontend`, `cli`, `migrations` и `tests`. Базовый путь API `/api/v1` сохранён как единый договор для внешних клиентов.
+
+Связанные артефакты:
+README.md, Docs/02_technical_assignment.md, Docs/05_architecture_structure.md, Docs/07_roadmap.md, Docs/08_backlog-3.md, Docs/09_technology_stack.md.
+
+Дата: 19.06.2026
+
+---
