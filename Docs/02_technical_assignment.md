@@ -252,6 +252,476 @@
 | --- | --- | --- | --- | --- | --- |
 | `GET /audit` | Получить журнал значимых действий и результатов. | `Authorization`; фильтры по актору, действию, результату, периоду, `request_id` HTTP-запроса и пагинации. | Страница записей `AuditLog` с контекстом действия и сквозным `request_id`. | Нет доступа, ошибка фильтрации, пользователь заблокирован. | Требования 3.9, 6.3; модель `AuditLog`. |
 
+### 4.11. Форматы запросов и ответов
+
+Раздел задаёт JSON-форматы для обязательных маршрутов `/api/v1`. Ошибки остаются в формате `{code, message, details, request_id}` и детализируются отдельно.
+
+#### 4.11.1. Общие правила JSON
+
+* имена JSON-полей передаются в `snake_case`;
+* идентификаторы сущностей передаются строками `uuid`;
+* `application_id` используется только для внешнего идентификатора заявки и соответствует внутреннему `request.request_id`;
+* `request_id` используется только для сквозного идентификатора HTTP-запроса;
+* `account_number` передаётся строкой из 20 цифр;
+* денежные значения передаются строкой с десятичной записью, совместимой с `numeric(38,10)`;
+* `transaction.amount` всегда положительный, а `ledger_entry.amount` хранит знак движения средств;
+* временные метки передаются строками RFC 3339 в UTC, например `2026-06-19T12:30:00Z`;
+* статусные поля используют значения из доменной модели без локализации;
+* известные пустые значения возвращаются как `null`, неизвестные или неприменимые поля не добавляются в ответ;
+* пароли, хэши паролей, хэши токенов и секреты не возвращаются во внешних ответах;
+* изменяющие запросы `POST` и `PATCH` принимают заголовок `Idempotency-Key` в формате `uuid`;
+* успешный ответ одного объекта возвращается как:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {}
+}
+```
+
+* успешный ответ списка возвращается как:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": [],
+  "page": {
+    "limit": 50,
+    "offset": 0,
+    "total": 0
+  }
+}
+```
+
+#### 4.11.2. Общие объекты ответа
+
+`User`:
+
+```json
+{
+  "user_id": "8cf15db6-6733-4e51-9a4c-20c580c5b1e9",
+  "email": "client@example.test",
+  "username": "client1",
+  "phone_number": "+79990000001",
+  "role": "Client",
+  "status": "Active",
+  "registered_at": "2026-06-19T12:30:00Z"
+}
+```
+
+`Currency`:
+
+```json
+{
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd",
+  "currency_code": "RUB",
+  "name": "Российский рубль",
+  "precision": 2,
+  "status": "Active"
+}
+```
+
+`AccountType`:
+
+```json
+{
+  "account_type_code": "CURRENT",
+  "name": "Текущий счёт",
+  "allow_negative_balance": false,
+  "status": "Active"
+}
+```
+
+`ReasonCode`:
+
+```json
+{
+  "reason_code": "CLIENT_REQUEST",
+  "name": "Запрос клиента",
+  "description": "Решение принято по обращению клиента",
+  "scope": "Request",
+  "status": "Active"
+}
+```
+
+`SystemSetting`:
+
+```json
+{
+  "setting_id": "ab3bb372-dfad-468a-9f17-81c7404f56e5",
+  "key": "cash_in_out_mode",
+  "value": "manual",
+  "value_type": "enum",
+  "description": "Режим пополнения и вывода",
+  "updated_at": "2026-06-19T12:30:00Z"
+}
+```
+
+`Account`:
+
+```json
+{
+  "account_id": "3c0bd759-2b38-4794-9c07-1b3c38d8bb7d",
+  "account_number": "40702810000000000001",
+  "user_id": "8cf15db6-6733-4e51-9a4c-20c580c5b1e9",
+  "currency": {
+    "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd",
+    "currency_code": "RUB",
+    "precision": 2
+  },
+  "account_type": {
+    "account_type_code": "CURRENT",
+    "name": "Текущий счёт"
+  },
+  "balance": "1000.0000000000",
+  "negative_balance_limit": null,
+  "status": "Active",
+  "created_at": "2026-06-19T12:30:00Z",
+  "closed_at": null
+}
+```
+
+`LedgerEntry`:
+
+```json
+{
+  "ledger_entry_id": "7a890d1a-fb58-45c0-99df-c75c3f25b5dd",
+  "account_id": "3c0bd759-2b38-4794-9c07-1b3c38d8bb7d",
+  "amount": "-100.0000000000",
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd",
+  "transaction_id": "2dc75cc1-797c-4e55-8997-dbd3d105157e",
+  "created_at": "2026-06-19T12:30:00Z"
+}
+```
+
+`Transaction`:
+
+```json
+{
+  "transaction_id": "2dc75cc1-797c-4e55-8997-dbd3d105157e",
+  "transaction_type": "Transfer",
+  "from_account_id": "3c0bd759-2b38-4794-9c07-1b3c38d8bb7d",
+  "to_account_id": "705812a2-9fdb-4ab8-bf3e-82efaec6e590",
+  "amount": "100.0000000000",
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd",
+  "status": "Success",
+  "reason_code": null,
+  "initiator_user_id": "8cf15db6-6733-4e51-9a4c-20c580c5b1e9",
+  "related_transaction_id": null,
+  "application_id": null,
+  "ledger_entries": [],
+  "created_at": "2026-06-19T12:30:00Z",
+  "completed_at": "2026-06-19T12:30:01Z"
+}
+```
+
+`Application`:
+
+```json
+{
+  "application_id": "2a7b4a11-2d39-45a1-b885-8b3ce062ce4d",
+  "request_type": "Transfer",
+  "status": "PendingApproval",
+  "initiator_user_id": "8cf15db6-6733-4e51-9a4c-20c580c5b1e9",
+  "operator_user_id": null,
+  "payload": {},
+  "reason_code": null,
+  "result": null,
+  "created_at": "2026-06-19T12:30:00Z",
+  "decided_at": null
+}
+```
+
+`Application.result` после одобрения содержит тип и идентификатор результата:
+
+```json
+{
+  "entity_type": "Transaction",
+  "entity_id": "2dc75cc1-797c-4e55-8997-dbd3d105157e"
+}
+```
+
+`AuditLog`:
+
+```json
+{
+  "audit_id": "79a2b67d-161e-49aa-8856-6e9dd669c19a",
+  "actor_type": "User",
+  "actor_id": "8cf15db6-6733-4e51-9a4c-20c580c5b1e9",
+  "action_type": "TransferCreated",
+  "result": "Success",
+  "context": {},
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "created_at": "2026-06-19T12:30:00Z"
+}
+```
+
+#### 4.11.3. Аутентификация и сессии
+
+`POST /auth/register` принимает:
+
+```json
+{
+  "email": "client@example.test",
+  "username": "client1",
+  "phone_number": "+79990000001",
+  "password": "plain-text-password"
+}
+```
+
+При `registration_mode = auto` ответ содержит созданного пользователя:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "result_type": "User",
+    "user": {},
+    "application": null
+  }
+}
+```
+
+При `registration_mode = manual` ответ содержит заявку:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "result_type": "Application",
+    "user": null,
+    "application": {}
+  }
+}
+```
+
+`POST /auth/login` принимает:
+
+```json
+{
+  "login": "client1",
+  "password": "plain-text-password"
+}
+```
+
+Успешный ответ входа и обновления сессии:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "access_token": "jwt",
+    "token_type": "Bearer",
+    "access_token_expires_at": "2026-06-19T12:45:00Z",
+    "refresh_token": null,
+    "refresh_session": {
+      "refresh_session_id": "60a5a5e2-fae6-4a36-85eb-b177a67eb3dd",
+      "issued_at": "2026-06-19T12:30:00Z",
+      "expires_at": "2026-07-19T12:30:00Z",
+      "revoked_at": null
+    },
+    "user": {}
+  }
+}
+```
+
+Если refresh-сессия передаётся через cookie, `refresh_token` в теле ответа равен `null`; для консольного клиента поле содержит значение токена.
+
+`POST /auth/refresh` и `POST /auth/logout` принимают `refresh_token` в cookie или в теле:
+
+```json
+{
+  "refresh_token": "refresh-token-for-cli"
+}
+```
+
+`POST /auth/logout` возвращает:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "success": true,
+    "refresh_session_id": "60a5a5e2-fae6-4a36-85eb-b177a67eb3dd",
+    "revoked_at": "2026-06-19T12:35:00Z"
+  }
+}
+```
+
+`GET /auth/me` возвращает объект `User`.
+
+#### 4.11.4. Счета и операции
+
+`GET /accounts` принимает параметры строки запроса `status`, `currency_id`, `account_type_code`, `limit`, `offset` и возвращает страницу объектов `Account`.
+
+`POST /accounts` принимает:
+
+```json
+{
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd",
+  "account_type_code": "CURRENT",
+  "negative_balance_limit": null
+}
+```
+
+При `account_opening_mode = auto` ответ содержит счёт, при `manual` — заявку:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "result_type": "Account",
+    "account": {},
+    "application": null
+  }
+}
+```
+
+В ручном режиме `result_type` принимает значение `Application`, поле `account` равно `null`, а поле `application` содержит созданную заявку.
+
+`GET /accounts/{account_id}` возвращает объект `Account`.
+
+`POST /accounts/{account_id}/close` принимает пустое тело или `{}` и возвращает объект `Account` со статусом `Closed`.
+
+`GET /transactions` принимает параметры строки запроса `account_id`, `transaction_type`, `status`, `created_from`, `created_to`, `limit`, `offset` и возвращает страницу объектов `Transaction`.
+
+`POST /transfers` принимает:
+
+```json
+{
+  "from_account_id": "3c0bd759-2b38-4794-9c07-1b3c38d8bb7d",
+  "to_account_number": "40702810000000000002",
+  "amount": "100.0000000000",
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd"
+}
+```
+
+При `internal_transfer_mode = enabled` ответ содержит операцию, при `manual` — заявку:
+
+```json
+{
+  "request_id": "0d68e8b8-4e32-40b2-9346-9b7e8f5d8b4f",
+  "data": {
+    "result_type": "Transaction",
+    "transaction": {},
+    "application": null
+  }
+}
+```
+
+В ручном режиме `result_type` принимает значение `Application`, поле `transaction` равно `null`, а поле `application` содержит созданную заявку.
+
+`POST /transactions/compensations` принимает:
+
+```json
+{
+  "related_transaction_id": "2dc75cc1-797c-4e55-8997-dbd3d105157e",
+  "reason_code": "OPERATOR_CORRECTION",
+  "from_account_id": "705812a2-9fdb-4ab8-bf3e-82efaec6e590",
+  "to_account_id": "3c0bd759-2b38-4794-9c07-1b3c38d8bb7d",
+  "amount": "100.0000000000",
+  "currency_id": "d2d907b5-70f5-4d39-a3f3-01f42e8c68dd"
+}
+```
+
+Ответ компенсации содержит объект `Transaction` с `transaction_type = Compensation`.
+
+#### 4.11.5. Заявки
+
+`POST /requests` принимает:
+
+```json
+{
+  "request_type": "Deposit",
+  "payload": {}
+}
+```
+
+`payload` зависит от `request_type`:
+
+| `request_type` | Формат `payload` во внешнем API |
+| --- | --- |
+| `UserRegistration` | `email`, `username`, `phone_number`, `password` |
+| `AccountOpening` | `currency_id`, `account_type_code`, `negative_balance_limit` |
+| `Deposit` | `account_id`, `amount`, `currency_id` |
+| `Withdraw` | `account_id`, `amount`, `currency_id` |
+| `Transfer` | `from_account_id`, `to_account_number`, `amount`, `currency_id` |
+
+Во внутреннем хранении пароль из `UserRegistration.payload.password` заменяется на `password_hash`.
+
+`GET /requests` принимает параметры строки запроса `request_type`, `status`, `initiator_user_id`, `created_from`, `created_to`, `limit`, `offset` и возвращает страницу объектов `Application`.
+
+`GET /requests/{application_id}` возвращает объект `Application`.
+
+`POST /requests/{application_id}/approve` принимает:
+
+```json
+{
+  "reason_code": "APPROVED_BY_OPERATOR"
+}
+```
+
+Ответ содержит объект `Application` со статусом `Approved` и заполненным `result`.
+
+`POST /requests/{application_id}/reject` принимает:
+
+```json
+{
+  "reason_code": "REJECTED_BY_OPERATOR"
+}
+```
+
+Ответ содержит объект `Application` со статусом `Rejected`, заполненным `reason_code` и пустым `result`.
+
+#### 4.11.6. Пользователи
+
+`GET /users` принимает параметры строки запроса `role`, `status`, `limit`, `offset` и возвращает страницу объектов `User`.
+
+`GET /users/{user_id}` возвращает объект `User`.
+
+`PATCH /users/{user_id}/status` принимает:
+
+```json
+{
+  "status": "Blocked",
+  "reason_code": "SECURITY_REVIEW"
+}
+```
+
+Ответ содержит обновлённый объект `User`.
+
+`PATCH /users/{user_id}/role` принимает:
+
+```json
+{
+  "role": "Operator"
+}
+```
+
+Ответ содержит обновлённый объект `User`.
+
+#### 4.11.7. Справочники, настройки и аудит
+
+`GET /currencies` принимает параметры строки запроса `status`, `limit`, `offset` и возвращает страницу объектов `Currency`.
+
+`GET /account-types` принимает параметры строки запроса `status`, `limit`, `offset` и возвращает страницу объектов `AccountType`.
+
+`GET /reason-codes` принимает параметры строки запроса `scope`, `status`, `limit`, `offset` и возвращает страницу объектов `ReasonCode`.
+
+`GET /settings` принимает параметры строки запроса `key`, `limit`, `offset` и возвращает страницу объектов `SystemSetting`.
+
+`PATCH /settings/{key}` принимает:
+
+```json
+{
+  "value": "enabled"
+}
+```
+
+Ответ содержит обновлённый объект `SystemSetting`.
+
+`GET /audit` принимает параметры строки запроса `actor_id`, `action_type`, `result`, `created_from`, `created_to`, `request_id`, `limit`, `offset` и возвращает страницу объектов `AuditLog`.
+
 ## 5. Требования к интерфейсам
 
 ### 5.1. Консольный клиент

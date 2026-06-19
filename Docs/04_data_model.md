@@ -207,6 +207,8 @@
 * `Withdraw`: `account_id`, `amount`, `currency_id`
 * `Transfer`: `from_account_id`, `to_account_number`, `amount`, `currency_id`
 
+Во внешнем API заявка `UserRegistration` принимает `password`; при сохранении в `request.payload` пароль заменяется на `password_hash`.
+
 ### 2.8. `reason_code`
 
 **Назначение:** единый справочник причин.
