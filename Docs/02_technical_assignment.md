@@ -871,13 +871,87 @@
 | Открытие счёта | `VALIDATION_ERROR`, `DICTIONARY_ENTRY_INACTIVE`, `ACCOUNT_ALREADY_EXISTS`, `NEGATIVE_BALANCE_NOT_ALLOWED`, `USER_BLOCKED`, `MODE_DISABLED` |
 | Закрытие счёта | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `ACCOUNT_BLOCKED`, `ACCOUNT_CLOSED`, `ACCOUNT_BALANCE_NOT_ZERO`, `USER_BLOCKED` |
 | История операций | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `USER_BLOCKED` |
-| Внутренний перевод | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `SAME_ACCOUNT_TRANSFER`, `CURRENCY_MISMATCH`, `INSUFFICIENT_FUNDS`, `NEGATIVE_BALANCE_LIMIT_EXCEEDED`, `ACCOUNT_BLOCKED`, `ACCOUNT_CLOSED`, `MODE_DISABLED` |
-| Компенсация операции | `OBJECT_NOT_FOUND`, `TRANSACTION_NOT_SUCCESSFUL`, `COMPENSATION_NOT_ALLOWED`, `REASON_CODE_NOT_ALLOWED`, `ACCESS_DENIED` |
+| Внутренний перевод | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `USER_BLOCKED`, `SAME_ACCOUNT_TRANSFER`, `CURRENCY_MISMATCH`, `INSUFFICIENT_FUNDS`, `NEGATIVE_BALANCE_LIMIT_EXCEEDED`, `ACCOUNT_BLOCKED`, `ACCOUNT_CLOSED`, `MODE_DISABLED` |
+| Компенсация операции | `OBJECT_NOT_FOUND`, `TRANSACTION_NOT_SUCCESSFUL`, `COMPENSATION_NOT_ALLOWED`, `REASON_CODE_NOT_ALLOWED`, `ACCESS_DENIED`, `USER_BLOCKED` |
 | Создание заявки | `REQUEST_TYPE_NOT_ALLOWED`, `PAYLOAD_TYPE_MISMATCH`, `SEPARATE_ROUTE_REQUIRED`, `MODE_DISABLED`, `USER_BLOCKED` |
 | Просмотр заявок | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `OBJECT_NOT_FOUND`, `USER_BLOCKED` |
-| Одобрение или отклонение заявки | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `APPLICATION_ALREADY_DECIDED`, `REASON_CODE_NOT_ALLOWED`, `APPLICATION_RESULT_NOT_ALLOWED` |
+| Одобрение или отклонение заявки | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `USER_BLOCKED`, `APPLICATION_ALREADY_DECIDED`, `REASON_CODE_NOT_ALLOWED`, `APPLICATION_RESULT_NOT_ALLOWED` |
 | Управление пользователями | `OBJECT_NOT_FOUND`, `ACCESS_DENIED`, `VALIDATION_ERROR`, `USER_STATUS_TRANSITION_INVALID`, `USER_BLOCKED` |
 | Справочники, настройки и аудит | `AUTHENTICATION_REQUIRED`, `ACCESS_DENIED`, `FILTER_INVALID`, `OBJECT_NOT_FOUND`, `SETTING_VALUE_INVALID`, `USER_BLOCKED` |
+
+### 4.13. Матрица доступа `Client`, `Operator`, `Admin`
+
+Раздел задаёт правила доступа для обязательных маршрутов `/api/v1`. Проверка выполняется серверной частью после аутентификации и до выполнения предметного действия.
+
+Общие правила:
+
+* в первой версии доступ определяется только активной ролью пользователя: `Client`, `Operator`, `Admin`;
+* отдельная система разрешений, прав на отдельные поля и пользовательских политик не вводится;
+* `Client` работает только со своими счетами, операциями и заявками;
+* `Operator` работает с пользователями, заявками, служебной историей, компенсациями и действиями обработки;
+* `Admin` работает с режимами работы системы, справочными данными в пределах обязательного API и аудитом;
+* если роль не имеет права на маршрут, возвращается `ACCESS_DENIED`;
+* если объект существует, но не входит в область видимости роли, маршрут с идентификатором возвращает `OBJECT_NOT_FOUND`;
+* если пользователь-исполнитель имеет статус `Blocked`, вход, обновление сессии, `GET /auth/me` и все маршруты с `Authorization` возвращают `USER_BLOCKED`, кроме `POST /auth/logout`, который может отозвать refresh-сессию без выполнения предметного действия.
+
+#### 4.13.1. Области видимости ролей
+
+| Роль | Область чтения | Область изменения |
+| --- | --- | --- |
+| `Client` | Собственный профиль через `GET /auth/me`, свои счета, свои операции, свои заявки, справочники и текущие режимы работы, необходимые для клиентских сценариев. | Регистрация без роли, вход и выход из своей сессии, открытие и закрытие своих счетов, перевод со своего счёта-источника, создание собственных заявок для сценариев без прямой предметной команды. |
+| `Operator` | Пользователи, счета, операции и заявки в служебной области обработки, а также справочники и режимы работы, необходимые для принятия решений. | Одобрение и отклонение заявок, блокировка и разблокировка пользователей, служебные переводы, компенсации операций. |
+| `Admin` | Пользователи для управления ролями, справочники, режимы работы системы, аудит. | Изменение активной роли пользователя и значений разрешённых настроек системы. |
+
+#### 4.13.2. Чтение данных
+
+| Маршрут | `Client` | `Operator` | `Admin` |
+| --- | --- | --- | --- |
+| `GET /auth/me` | Текущий пользователь. | Текущий пользователь. | Текущий пользователь. |
+| `GET /accounts` | Только свои счета, включая `Blocked` и `Closed`. | Счета пользователей в служебной области обработки. | Нет доступа. |
+| `GET /accounts/{account_id}` | Только свой счёт. | Счёт пользователя в служебной области обработки. | Нет доступа. |
+| `GET /transactions` | Операции по своим счетам и своим заявкам. | Операции пользователей в служебной области обработки. | Нет доступа. |
+| `GET /requests` | Только свои заявки. | Очередь и история заявок пользователей. | Нет доступа. |
+| `GET /requests/{application_id}` | Только своя заявка. | Любая заявка из очереди или истории обработки. | Нет доступа. |
+| `GET /users` | Нет доступа; собственные данные доступны через `GET /auth/me`. | Список пользователей для обслуживания и управления статусом. | Список пользователей для управления ролями. |
+| `GET /users/{user_id}` | Нет доступа; собственные данные доступны через `GET /auth/me`. | Карточка пользователя для обслуживания и управления статусом. | Карточка пользователя для управления ролями. |
+| `GET /currencies` | Чтение справочника для клиентских сценариев. | Чтение справочника для обработки заявок и операций. | Чтение справочника. |
+| `GET /account-types` | Чтение справочника для открытия счёта. | Чтение справочника для обработки заявок. | Чтение справочника. |
+| `GET /reason-codes` | Чтение причин, видимых в собственных заявках и операциях. | Чтение причин для решений по заявкам и компенсациям. | Чтение справочника причин. |
+| `GET /settings` | Чтение текущих режимов, влияющих на клиентские действия. | Чтение текущих режимов для обработки заявок и операций. | Чтение всех разрешённых настроек. |
+| `GET /audit` | Нет доступа. | Нет доступа. | Чтение журнала аудита. |
+
+#### 4.13.3. Изменение данных и командные маршруты
+
+| Маршрут | Кто может выполнять | Правило доступа |
+| --- | --- | --- |
+| `POST /auth/register` | Неаутентифицированный пользователь. | Создаёт пользователя с ролью `Client` при `registration_mode = auto` или заявку `UserRegistration` при `manual`. |
+| `POST /auth/login` | Неаутентифицированный пользователь. | Вход запрещён, если найденный пользователь имеет статус `Blocked` или ещё не одобрен после ручной регистрации. |
+| `POST /auth/refresh` | Владелец действующей refresh-сессии. | Новый `access token` выдаётся только для пользователя со статусом `Active`. |
+| `POST /auth/logout` | Владелец refresh-сессии. | Отзывает refresh-сессию; допускается как безопасное завершение сессии без предметного действия. |
+| `POST /accounts` | `Client`. | Открывает счёт для текущего клиента или создаёт его заявку `AccountOpening`; `Operator` и `Admin` не открывают счета этим маршрутом. |
+| `POST /accounts/{account_id}/close` | `Client`. | Закрывает только собственный активный счёт при `balance = 0`; `Blocked` и `Closed` не закрываются. |
+| `POST /transfers` | `Client`, `Operator`. | `Client` переводит только со своего счёта-источника; `Operator` может выполнить служебный перевод по правилам режима `internal_transfer_mode`; `Admin` не выполняет переводы. |
+| `POST /transactions/compensations` | `Operator`. | Создаёт компенсацию успешной операции с допустимым `ReasonCode`; `Client` и `Admin` не создают компенсации. |
+| `POST /requests` | `Client`. | Создаёт собственную заявку только для сценария, разрешённого режимом работы и не заменяющего отдельный предметный маршрут. |
+| `POST /requests/{application_id}/approve` | `Operator`. | Одобряет только заявку в статусе `PendingApproval` и создаёт результат предметной области. |
+| `POST /requests/{application_id}/reject` | `Operator`. | Отклоняет только заявку в статусе `PendingApproval` с допустимым `ReasonCode`. |
+| `PATCH /users/{user_id}/status` | `Operator`. | Меняет статус пользователя между `Active` и `Blocked`; `Client` и `Admin` не меняют статус этим маршрутом. |
+| `PATCH /users/{user_id}/role` | `Admin`. | Меняет активную роль пользователя на одно из значений `Client`, `Operator`, `Admin`. |
+| `PATCH /settings/{key}` | `Admin`. | Меняет только разрешённые ключи `SystemSetting`: `bank_name`, `registration_mode`, `account_opening_mode`, `internal_transfer_mode`, `cash_in_out_mode`. |
+
+В обязательном API первой версии нет маршрутов изменения `Currency`, `AccountType` и `ReasonCode`. Эти справочники читаются через `/currencies`, `/account-types` и `/reason-codes`; их начальное наполнение и дальнейшее управление уточняются отдельно от F2-05.
+
+#### 4.13.4. Поведение заблокированного пользователя
+
+Пользователь со статусом `Blocked` не может входить, обновлять `access token`, получать текущий профиль и выполнять маршруты, требующие `Authorization`.
+
+Правила отказа:
+
+* `POST /auth/login` и `POST /auth/refresh` возвращают `USER_BLOCKED`;
+* `GET /auth/me` и маршруты с `Authorization` возвращают `USER_BLOCKED`, если исполнитель уже заблокирован;
+* `POST /auth/logout` может отозвать refresh-сессию заблокированного пользователя, потому что это не создаёт нового предметного результата;
+* блокировка пользователя не скрывает уже созданные счета, операции, заявки и записи аудита от ролей, которые имеют право их читать;
+* пользователь со статусом `Blocked` может быть разблокирован оператором через `PATCH /users/{user_id}/status`.
 
 ## 5. Требования к интерфейсам
 
