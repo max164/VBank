@@ -71,3 +71,20 @@ GET  /api/v1/auth/me
 Все `POST`-маршруты принимают `Idempotency-Key`. По умолчанию refresh-токен
 возвращается в теле ответа для консольного клиента. Для cookie-режима задайте
 `VBANK_REFRESH_TOKEN_TRANSPORT=cookie`.
+
+## Пользователи, роли и статусы
+
+Реализованы маршруты:
+
+```text
+GET   /api/v1/users
+GET   /api/v1/users/{user_id}
+PATCH /api/v1/users/{user_id}/status
+PATCH /api/v1/users/{user_id}/role
+```
+
+`Operator` читает пользователей и меняет статус между `Active` и `Blocked` с
+причиной `ReasonCode` области `User` или `Both`. `Admin` читает пользователей и
+меняет активную роль на `Client`, `Operator` или `Admin`. `Client` управляет
+собственным профилем через `GET /api/v1/auth/me` и не имеет доступа к
+`/api/v1/users`.

@@ -8,6 +8,7 @@ from vbank.auth.infrastructure.repositories import SqlAlchemyAuthRepository
 from vbank.shared.api.dependencies import get_session, get_settings
 from vbank.shared.config import Settings
 from vbank.shared.errors import VBankError
+from vbank.user.infrastructure.models import UserAccount
 
 
 def get_auth_service(
@@ -36,3 +37,10 @@ def require_access_token(request: Request) -> str:
             details={"category": "access"},
         )
     return token
+
+
+def get_current_user(
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    access_token: Annotated[str, Depends(require_access_token)],
+) -> UserAccount:
+    return auth_service.get_current_user(access_token)
