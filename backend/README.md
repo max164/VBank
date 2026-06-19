@@ -35,3 +35,18 @@ python -m uvicorn vbank.main:app --reload
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
+
+## Миграции
+
+Начальная схема PostgreSQL создаётся через Alembic. Перед запуском укажите
+`VBANK_DATABASE_URL` в `.env`.
+
+```powershell
+python -m alembic -c alembic.ini upgrade head
+```
+
+Проверка SQL без подключения к базе:
+
+```powershell
+python -m alembic -c alembic.ini upgrade head --sql
+```
