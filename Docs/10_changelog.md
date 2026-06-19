@@ -187,3 +187,18 @@ README.md, Docs/02_technical_assignment.md, Docs/05_architecture_structure.md, D
 Дата: 19.06.2026
 
 ---
+
+## 13. Были закрыты спорные вопросы входных данных этапа 2
+
+Состояние:
+Завершено.
+
+Результат:
+Были уточнены различие между `request_id` HTTP-запроса и `application_id` заявки в API, поведение заблокированного счёта, знак суммы проводки, основной маршрут открытия счёта, начальный режим пополнения и вывода, а также входной формат перевода по номеру счёта получателя.
+
+Связанные артефакты:
+Docs/01_domain_analysis.md, Docs/02_technical_assignment.md, Docs/03_domain_model.md, Docs/04_data_model.md, Docs/05_architecture_structure.md, Docs/06_domain_glossary.md, Docs/08_backlog-2.md, Docs/09_technology_stack.md.
+
+Дата: 19.06.2026
+
+---

@@ -92,6 +92,12 @@
 * `closed_at is null or status = 'Closed'`
 * `unique (user_id, currency_id, account_type_code)`
 
+**Правила состояния:**
+
+* `Blocked` запрещает новые операции и закрытие счёта;
+* `Blocked` не скрывает счёт из списков и истории;
+* разблокировка переводит счёт обратно в `Active`.
+
 **Индексы:**
 
 * `ix_account_user_id`
@@ -144,6 +150,16 @@
 * `transaction_id uuid not null fk -> transaction_record.transaction_id`
 * `created_at timestamptz not null`
 
+**Ограничения:**
+
+* `amount <> 0`
+
+**Правила суммы:**
+
+* отрицательная сумма означает списание со счёта;
+* положительная сумма означает зачисление на счёт;
+* сумма финансовой операции в `transaction_record.amount` остаётся положительной.
+
 **Индексы:**
 
 * `ix_ledger_entry_account_id_created_at`
@@ -167,6 +183,8 @@
 * `created_at timestamptz not null`
 * `decided_at timestamptz null`
 
+В API поле `request_id` этой таблицы представляется как `application_id`, чтобы не смешиваться со сквозным `request_id` HTTP-запроса.
+
 **Ограничения:**
 
 * `request_type in ('UserRegistration','AccountOpening','Deposit','Withdraw','Transfer')`
@@ -187,7 +205,7 @@
 * `AccountOpening`: `currency_id`, `account_type_code`, `negative_balance_limit`
 * `Deposit`: `account_id`, `amount`, `currency_id`
 * `Withdraw`: `account_id`, `amount`, `currency_id`
-* `Transfer`: `from_account_id`, `to_account_number`, `amount`
+* `Transfer`: `from_account_id`, `to_account_number`, `amount`, `currency_id`
 
 ### 2.8. `reason_code`
 
@@ -227,6 +245,10 @@
 * `internal_transfer_mode`
 * `cash_in_out_mode`
 
+**Начальное значение:**
+
+* `cash_in_out_mode = manual`
+
 ### 2.10. `audit_log`
 
 **Назначение:** неизменяемый аудит.
@@ -241,6 +263,8 @@
 * `context jsonb not null`
 * `request_id uuid null`
 * `created_at timestamptz not null`
+
+Поле `audit_log.request_id` хранит сквозной идентификатор HTTP-запроса, а не ссылку на `request.request_id`.
 
 **Ограничения:**
 
@@ -303,4 +327,3 @@
 * `user_account 1 -> n request` по `operator_user_id`
 * `account 1 -> n ledger_entry`
 * `transaction_record 1 -> n ledger_entry`
-
